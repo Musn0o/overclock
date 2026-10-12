@@ -25,13 +25,14 @@ Implemented and runnable:
 
 ## Roadmap
 
-### Milestone 1 — Core feel (next)
-- [ ] Tune jump/gravity/move; add a small landing squash + dust puff.
-- [ ] Platform variety: **one-way** (jump through from below), **crumbling**
-      (breaks a moment after you stand), **moving** (horizontal), **bounce pads**.
-- [ ] Wall-jump (a distinct control hook vs. the inspiration).
-- [ ] Combo juice: bigger font pop on combo milestones, screen tint.
-- [ ] Near-miss? N/A here; instead a **"close call"** when plasma almost touches.
+### Milestone 1 — Core feel (DONE)
+- [x] Tuned jump/gravity/move; landing squash + dust puff.
+- [x] Platform variety: **one-way** (jump through from below), **crumbling**
+      (shakes then breaks), **moving** (horizontal, carries the player),
+      **bounce pads**.
+- [x] Wall-jump off neon **pillars** (kept wrap-around at the screen edges too).
+- [x] Combo juice: centre pop + screen flash on every 5th combo.
+- [x] **"Close call"** when plasma nearly catches you (bonus + brief slow-mo).
 
 ### Milestone 2 — Meta progression (reuse Undertow architecture)
 - [ ] Skins (robot colours/trails) bought with coins.

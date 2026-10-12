@@ -34,6 +34,19 @@ export const GAME = {
     dangerRiseStart: 24,
     dangerRiseMax: 92,
 
+    // Feel / platform variety (Milestone 1).
+    bounceVel: 1000,
+    wallJumpVel: 740,
+    wallJumpPush: 400,
+    wallJumpCooldownMs: 220,
+    crumbleDelayMs: 460,
+    closeCallPx: 46,
+    closeCallSlowmo: 0.35,
+    wallWidth: 18,
+    wallHeight: 150,
+    moverWidth: 112,
+    moverSpeed: 90,
+
     metersPerPx: 1 / 12
 } as const;
 
