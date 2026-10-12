@@ -11,8 +11,10 @@ export const GAME = {
 
     platform: 0x24244a,
     platformEdge: 0x37f0ff,
-    wall: 0x2b2b6b,
+    wall: 0x4b3fd0,
+    wallDark: 0x231c66,
     danger: 0xff3d81,
+    plasmaEdge: 0xffe3a3,
 
     interstitialEvery: 3,
     reviveRewardId: 'overclock-revive-1',
@@ -34,7 +36,8 @@ export const GAME = {
 
     // Narrow tower (side walls) so platforms are always reachable.
     towerMaxWidth: 560,
-    wallThickness: 16,
+    wallThickness: 22,
+    towerSideMargin: 40,
     rowStep: 132,
     platformWidthMin: 80,
     platformWidthMax: 150,

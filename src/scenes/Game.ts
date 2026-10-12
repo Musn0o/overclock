@@ -5,6 +5,7 @@ import { sfx } from '../systems/Sfx';
 
 const PLAYER_W = 30;
 const PLAYER_H = 38;
+const START_Y = 40;
 
 type PlatformKind = 'normal' | 'crumble' | 'bounce';
 
@@ -244,11 +245,11 @@ export class Game extends Phaser.Scene {
         this.enemies = [];
 
         const startX = (this.innerLeft + this.innerRight) / 2;
-        this.spawnPlatform(startX, 40, Math.min(200, this.towerWidth * 0.6), 'normal');
-        this.player.setPosition(startX, 40 - PLAYER_H / 2 - 10);
+        this.spawnPlatform(startX, START_Y, Math.min(200, this.towerWidth * 0.6), 'normal');
+        this.player.setPosition(startX, START_Y - PLAYER_H / 2 - 10);
         this.body.setVelocity(0, 0);
 
-        this.spawnY = 40 - GAME.rowStep;
+        this.spawnY = START_Y - GAME.rowStep;
         for (let i = 0; i < 8; i++) {
             this.spawnRow(this.spawnY);
             this.spawnY -= GAME.rowStep;
@@ -606,9 +607,9 @@ export class Game extends Phaser.Scene {
             sfx.whoosh();
         }
 
-        // Falling out of the bottom of the tower is death, immediately.
-        const viewBottom = this.cameras.main.scrollY + this.height;
-        if (this.player.y - PLAYER_H / 2 > viewBottom + 40) {
+        // Falling below the tower is immediate death (there is nothing below
+        // the start), so a fall ends the run right away.
+        if (this.player.y - PLAYER_H / 2 > START_Y + 150) {
             this.die();
             return;
         }
@@ -669,7 +670,7 @@ export class Game extends Phaser.Scene {
         this.bg.fillRect(left, 0, right - left, this.height);
 
         // World-anchored horizontal grid lines (these scroll with the tower).
-        this.bg.lineStyle(1, GAME.colors[0], 0.16);
+        this.bg.lineStyle(1, GAME.colors[0], 0.22);
         const first = Math.floor(scrollY / 80) - 1;
         const last = Math.ceil((scrollY + this.height) / 80) + 1;
         for (let k = first; k <= last; k++) {
@@ -677,13 +678,25 @@ export class Game extends Phaser.Scene {
             this.bg.lineBetween(left, y, right, y);
         }
 
-        // Walls hug the moving inner edges, so they are always visible.
-        this.bg.fillStyle(GAME.wall, 1);
-        this.bg.fillRect(left - GAME.wallThickness, 0, GAME.wallThickness, this.height);
-        this.bg.fillRect(right, 0, GAME.wallThickness, this.height);
-        this.bg.fillStyle(GAME.colors[0], 0.85);
-        this.bg.fillRect(left - 3, 0, 3, this.height);
-        this.bg.fillRect(right, 0, 3, this.height);
+        // High-contrast segmented side walls with a bright neon inner edge.
+        const wt = GAME.wallThickness;
+        this.bg.fillStyle(GAME.wallDark, 1);
+        this.bg.fillRect(left - wt, 0, wt, this.height);
+        this.bg.fillRect(right, 0, wt, this.height);
+        const segStart = Math.floor(scrollY / 40) - 1;
+        const segEnd = Math.ceil((scrollY + this.height) / 40) + 1;
+        for (let k = segStart; k <= segEnd; k++) {
+            const y = k * 40 - scrollY;
+            this.bg.fillStyle(GAME.wall, 1);
+            this.bg.fillRect(left - wt, y, wt, 26);
+            this.bg.fillRect(right, y, wt, 26);
+        }
+        this.bg.fillStyle(GAME.colors[0], 0.16);
+        this.bg.fillRect(left - wt - 6, 0, 6, this.height);
+        this.bg.fillRect(right + wt, 0, 6, this.height);
+        this.bg.fillStyle(GAME.colors[0], 0.95);
+        this.bg.fillRect(left - 5, 0, 5, this.height);
+        this.bg.fillRect(right, 0, 5, this.height);
 
         // Plasma inside the tower.
         const dangerScreenY = this.dangerY - scrollY;
@@ -694,8 +707,8 @@ export class Game extends Phaser.Scene {
             this.dangerGfx.fillStyle(GAME.danger, Math.max(0.12, 0.9 - i * 0.07));
             this.dangerGfx.fillRect(left, dangerScreenY + i * bandH, right - left, bandH + 1);
         }
-        this.dangerGfx.fillStyle(0xffffff, 0.85);
-        this.dangerGfx.fillRect(left, dangerScreenY - 2, right - left, 3);
+        this.dangerGfx.fillStyle(GAME.plasmaEdge, 0.95);
+        this.dangerGfx.fillRect(left, dangerScreenY - 3, right - left, 4);
 
         this.visor.setPosition(this.player.x + this.facing * 4, this.player.y - 6);
     }
@@ -712,7 +725,8 @@ export class Game extends Phaser.Scene {
         this.width = this.scale.width;
         this.height = this.scale.height;
 
-        this.towerWidth = Math.min(this.width, GAME.towerMaxWidth);
+        // Always leave a little side margin so the walls are never clipped.
+        this.towerWidth = Phaser.Math.Clamp(this.width - GAME.towerSideMargin, 240, GAME.towerMaxWidth);
         this.towerLeft = (this.width - this.towerWidth) / 2;
         this.towerRight = this.towerLeft + this.towerWidth;
         this.innerLeft = this.towerLeft + GAME.wallThickness;
