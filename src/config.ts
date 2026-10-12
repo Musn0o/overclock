@@ -51,6 +51,17 @@ export const GAME = {
     moverWidth: 100,
     moverSpeed: 80,
 
+    // Dynamic tower "squeeze" event (walls close in, then reopen).
+    squeezeCycle: 16,
+    squeezeStart: 10,
+    squeezeDuration: 6,
+    squeezeInset: 92,
+
+    // Drifting hazards to dodge.
+    enemyWidth: 26,
+    enemySpeed: 74,
+    enemyChance: 0.06,
+
     // Feedback.
     closeCallPx: 46,
     closeCallSlowmo: 0.35,

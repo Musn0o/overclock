@@ -31,6 +31,10 @@ export class Game extends Phaser.Scene {
     private towerWidth = 0;
     private innerLeft = 0;
     private innerRight = 0;
+    private curInnerLeft = 0;
+    private curInnerRight = 0;
+    private squeeze = 0;
+    private squeezeWarned = false;
 
     private canWallJump = true;
     private prevWallLeft = false;
@@ -45,6 +49,7 @@ export class Game extends Phaser.Scene {
 
     private platforms!: Phaser.Physics.Arcade.StaticGroup;
     private movers!: Phaser.Physics.Arcade.Group;
+    private enemies: Phaser.GameObjects.Rectangle[] = [];
 
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private keyA!: Phaser.Input.Keyboard.Key;
@@ -112,6 +117,8 @@ export class Game extends Phaser.Scene {
         this.highestY = 0;
         this.slowmo = 0;
         this.closeCallArmed = false;
+        this.squeeze = 0;
+        this.squeezeWarned = false;
         this.lastGroundedAt = -9999;
         this.jumpBufferedAt = -9999;
         this.groundPlatform = null;
@@ -231,6 +238,10 @@ export class Game extends Phaser.Scene {
     private resetWorld(): void {
         this.platforms.clear(true, true);
         this.movers.clear(true, true);
+        for (const enemy of this.enemies) {
+            enemy.destroy();
+        }
+        this.enemies = [];
 
         const startX = (this.innerLeft + this.innerRight) / 2;
         this.spawnPlatform(startX, 40, Math.min(200, this.towerWidth * 0.6), 'normal');
@@ -289,14 +300,19 @@ export class Game extends Phaser.Scene {
         if (Math.random() < 0.12) {
             this.spawnMover(Phaser.Math.Between(Math.round(lo), Math.round(hi)), y - GAME.rowStep / 2, GAME.moverWidth);
         }
+        if (Math.random() < GAME.enemyChance) {
+            this.spawnEnemy(Phaser.Math.Between(Math.round(lo), Math.round(hi)), y - GAME.rowStep / 2);
+        }
     }
 
     private cullWorld(): void {
         const below = this.cameras.main.scrollY + this.height + 120;
         const cull = (group: Phaser.Physics.Arcade.Group | Phaser.Physics.Arcade.StaticGroup): void => {
-            for (const child of group.getChildren()) {
+            // Iterate a copy and remove through the group so its body list stays
+            // consistent (destroying directly can corrupt the collider).
+            for (const child of group.getChildren().slice()) {
                 if ((child as Phaser.GameObjects.Rectangle).y > below) {
-                    child.destroy();
+                    group.remove(child, true, true);
                 }
             }
         };
@@ -335,7 +351,9 @@ export class Game extends Phaser.Scene {
         const dt = raw * (this.slowmo > 0 ? GAME.closeCallSlowmo : 1);
 
         this.highestY = Math.min(this.highestY, this.player.y);
+        this.updateSqueeze();
         this.updateMovers();
+        this.updateEnemies(dt);
         this.updateMovement(dt);
         this.updateJump();
         this.updateWallSlide();
@@ -360,6 +378,75 @@ export class Game extends Phaser.Scene {
                 body.setVelocityX(-Math.abs(body.velocity.x));
             }
         }
+    }
+
+    /** Periodic event where the tower walls close in, then reopen. */
+    private updateSqueeze(): void {
+        const t = this.elapsed % GAME.squeezeCycle;
+        let target = 0;
+        if (t >= GAME.squeezeStart && t <= GAME.squeezeStart + GAME.squeezeDuration) {
+            target = Math.sin(((t - GAME.squeezeStart) / GAME.squeezeDuration) * Math.PI);
+        }
+
+        if (target > 0.05 && !this.squeezeWarned) {
+            this.squeezeWarned = true;
+            this.showPop('SQUEEZE!', GAME.danger);
+            sfx.whoosh();
+        } else if (target <= 0.05) {
+            this.squeezeWarned = false;
+        }
+
+        this.squeeze = Phaser.Math.Linear(this.squeeze, target, 0.1);
+        this.curInnerLeft = this.innerLeft + this.squeeze * GAME.squeezeInset;
+        this.curInnerRight = this.innerRight - this.squeeze * GAME.squeezeInset;
+
+        this.physics.world.setBounds(this.curInnerLeft, -100000, this.curInnerRight - this.curInnerLeft, 200000);
+        this.physics.world.setBoundsCollision(true, true, false, false);
+    }
+
+    private updateEnemies(dt: number): void {
+        if (this.enemies.length === 0) {
+            return;
+        }
+        const half = GAME.enemyWidth / 2;
+        const px = this.player.x;
+        const py = this.player.y;
+        const below = this.cameras.main.scrollY + this.height + 120;
+
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const rect = this.enemies[i];
+            let vx = rect.getData('vx') as number;
+            rect.x += vx * dt;
+
+            if (rect.x <= this.curInnerLeft + half && vx < 0) {
+                vx = Math.abs(vx);
+                rect.setData('vx', vx);
+            } else if (rect.x >= this.curInnerRight - half && vx > 0) {
+                vx = -Math.abs(vx);
+                rect.setData('vx', vx);
+            }
+
+            if (
+                Math.abs(rect.x - px) < half + PLAYER_W / 2 - 2 &&
+                Math.abs(rect.y - py) < half + PLAYER_H / 2 - 2
+            ) {
+                this.die();
+                return;
+            }
+
+            if (rect.y > below) {
+                rect.destroy();
+                this.enemies.splice(i, 1);
+            }
+        }
+    }
+
+    private spawnEnemy(x: number, y: number): void {
+        const rect = this.add.rectangle(x, y, GAME.enemyWidth, GAME.enemyWidth, GAME.danger).setDepth(4);
+        rect.setStrokeStyle(3, 0xffffff, 0.85);
+        rect.setData('vx', Phaser.Math.RND.pick([-1, 1]) * GAME.enemySpeed);
+        this.tweens.add({ targets: rect, angle: 405, duration: 2200, repeat: -1 });
+        this.enemies.push(rect);
     }
 
     private inputDir(): number {
@@ -572,11 +659,14 @@ export class Game extends Phaser.Scene {
     private render(): void {
         const scrollY = this.cameras.main.scrollY;
 
+        const left = this.curInnerLeft;
+        const right = this.curInnerRight;
+
         this.bg.clear();
         this.bg.fillStyle(GAME.outside, 1);
         this.bg.fillRect(0, 0, this.width, this.height);
         this.bg.fillStyle(GAME.background, 1);
-        this.bg.fillRect(this.towerLeft, 0, this.towerWidth, this.height);
+        this.bg.fillRect(left, 0, right - left, this.height);
 
         // World-anchored horizontal grid lines (these scroll with the tower).
         this.bg.lineStyle(1, GAME.colors[0], 0.16);
@@ -584,16 +674,16 @@ export class Game extends Phaser.Scene {
         const last = Math.ceil((scrollY + this.height) / 80) + 1;
         for (let k = first; k <= last; k++) {
             const y = k * 80 - scrollY;
-            this.bg.lineBetween(this.innerLeft, y, this.innerRight, y);
+            this.bg.lineBetween(left, y, right, y);
         }
 
-        // Side walls drawn INSIDE the tower edges so they are always visible.
+        // Walls hug the moving inner edges, so they are always visible.
         this.bg.fillStyle(GAME.wall, 1);
-        this.bg.fillRect(this.towerLeft, 0, GAME.wallThickness, this.height);
-        this.bg.fillRect(this.towerRight - GAME.wallThickness, 0, GAME.wallThickness, this.height);
+        this.bg.fillRect(left - GAME.wallThickness, 0, GAME.wallThickness, this.height);
+        this.bg.fillRect(right, 0, GAME.wallThickness, this.height);
         this.bg.fillStyle(GAME.colors[0], 0.85);
-        this.bg.fillRect(this.innerLeft - 3, 0, 3, this.height);
-        this.bg.fillRect(this.innerRight, 0, 3, this.height);
+        this.bg.fillRect(left - 3, 0, 3, this.height);
+        this.bg.fillRect(right, 0, 3, this.height);
 
         // Plasma inside the tower.
         const dangerScreenY = this.dangerY - scrollY;
@@ -602,10 +692,10 @@ export class Game extends Phaser.Scene {
         const bandH = Math.max(6, (this.height - dangerScreenY) / bands);
         for (let i = 0; i < bands; i++) {
             this.dangerGfx.fillStyle(GAME.danger, Math.max(0.12, 0.9 - i * 0.07));
-            this.dangerGfx.fillRect(this.towerLeft, dangerScreenY + i * bandH, this.towerWidth, bandH + 1);
+            this.dangerGfx.fillRect(left, dangerScreenY + i * bandH, right - left, bandH + 1);
         }
         this.dangerGfx.fillStyle(0xffffff, 0.85);
-        this.dangerGfx.fillRect(this.towerLeft, dangerScreenY - 2, this.towerWidth, 3);
+        this.dangerGfx.fillRect(left, dangerScreenY - 2, right - left, 3);
 
         this.visor.setPosition(this.player.x + this.facing * 4, this.player.y - 6);
     }
@@ -627,6 +717,8 @@ export class Game extends Phaser.Scene {
         this.towerRight = this.towerLeft + this.towerWidth;
         this.innerLeft = this.towerLeft + GAME.wallThickness;
         this.innerRight = this.towerRight - GAME.wallThickness;
+        this.curInnerLeft = this.innerLeft;
+        this.curInnerRight = this.innerRight;
 
         // Invisible world bounds = the inner faces of the side walls.
         this.physics.world.setBounds(this.innerLeft, -100000, this.innerRight - this.innerLeft, 200000);
