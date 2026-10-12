@@ -15,16 +15,20 @@ interface GameInitData {
 }
 
 /**
- * OVERCLOCK core loop (Milestone 1).
+ * OVERCLOCK core loop.
  *
- * Climb an endless neon tower: move and jump platform to platform while plasma
- * rises from below. Platform variety (one-way, crumbling, bounce pads, moving),
- * wall-jumping off neon pillars, landing juice, combo milestones and near-miss
- * "close call" feedback.
+ * Icy-Tower-style momentum: running fast makes you jump higher, and the tower
+ * is narrow with solid side walls you can wall-slide and wall-jump off. Plasma
+ * rises from below. One-way, crumbling, bounce and moving platforms; combo on
+ * chained landings; "close call" slow-mo when the plasma nearly catches you.
  */
 export class Game extends Phaser.Scene {
     private width = 0;
     private height = 0;
+
+    private towerLeft = 0;
+    private towerRight = 0;
+    private towerWidth = 0;
 
     private bg!: Phaser.GameObjects.Graphics;
     private dangerGfx!: Phaser.GameObjects.Graphics;
@@ -34,23 +38,27 @@ export class Game extends Phaser.Scene {
     private body!: Phaser.Physics.Arcade.Body;
 
     private platforms!: Phaser.Physics.Arcade.StaticGroup;
-    private walls!: Phaser.Physics.Arcade.StaticGroup;
     private movers!: Phaser.Physics.Arcade.Group;
 
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private keyA!: Phaser.Input.Keyboard.Key;
     private keyD!: Phaser.Input.Keyboard.Key;
 
+    private leftHeld = false;
+    private rightHeld = false;
+    private btnLeft!: Phaser.GameObjects.Rectangle;
+    private btnRight!: Phaser.GameObjects.Rectangle;
+    private btnJump!: Phaser.GameObjects.Rectangle;
+    private btnLeftLabel!: Phaser.GameObjects.Text;
+    private btnRightLabel!: Phaser.GameObjects.Text;
+    private btnJumpLabel!: Phaser.GameObjects.Text;
+
     private heightText!: Phaser.GameObjects.Text;
     private comboText!: Phaser.GameObjects.Text;
     private bestText!: Phaser.GameObjects.Text;
     private popText!: Phaser.GameObjects.Text;
-    private jumpLabel!: Phaser.GameObjects.Text;
-    private jumpPad!: Phaser.GameObjects.Rectangle;
 
     private groundPlatform: Phaser.GameObjects.GameObject | null = null;
-
-    private pointerTargetX: number | null = null;
     private facing = 1;
 
     private baseScore = 0;
@@ -83,7 +91,8 @@ export class Game extends Phaser.Scene {
         this.combo = 0;
         this.maxCombo = 0;
         this.facing = 1;
-        this.pointerTargetX = null;
+        this.leftHeld = false;
+        this.rightHeld = false;
         this.wasGrounded = false;
         this.lastLandingY = null;
         this.roundActive = true;
@@ -104,24 +113,22 @@ export class Game extends Phaser.Scene {
         this.dangerGfx = this.add.graphics().setDepth(5);
 
         this.platforms = this.physics.add.staticGroup();
-        this.walls = this.physics.add.staticGroup();
         this.movers = this.physics.add.group({ allowGravity: false, immovable: true });
 
         this.player = this.add.rectangle(0, 0, PLAYER_W, PLAYER_H, GAME.colors[0]).setDepth(6);
         this.physics.add.existing(this.player);
         this.visor = this.add.rectangle(0, 0, PLAYER_W * 0.6, 8, GAME.colors[1]).setDepth(7);
         this.body = this.player.body as Phaser.Physics.Arcade.Body;
-        this.body.setMaxVelocity(GAME.moveSpeed, GAME.maxFall);
+        this.body.setMaxVelocity(1400, GAME.maxFall);
+        this.body.setCollideWorldBounds(true);
 
         const oneWay = (a: unknown, b: unknown): boolean => {
             const pb = (a as Phaser.GameObjects.Rectangle).body as Phaser.Physics.Arcade.Body;
             const pl = (b as Phaser.GameObjects.Rectangle).body as Phaser.Physics.Arcade.Body;
             return pb.velocity.y >= 0 && pb.bottom <= pl.top + 12;
         };
-
         this.physics.add.collider(this.player, this.platforms, this.onCollideGround, oneWay, this);
         this.physics.add.collider(this.player, this.movers, this.onCollideGround, oneWay, this);
-        this.physics.add.collider(this.player, this.walls);
 
         this.heightText = this.add
             .text(0, 0, '0 m', {
@@ -162,14 +169,14 @@ export class Game extends Phaser.Scene {
             .setDepth(12)
             .setAlpha(0);
 
-        this.jumpPad = this.add
-            .rectangle(0, 0, 104, 104, GAME.colors[1], 0.16)
-            .setStrokeStyle(3, GAME.colors[1], 0.5)
-            .setDepth(9);
-        this.jumpLabel = this.add
-            .text(0, 0, 'JUMP', { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '20px', color: '#ffffff' })
-            .setOrigin(0.5)
-            .setDepth(10);
+        // Touch controls (visible, always on). Extra pointers for multi-touch.
+        this.input.addPointer(2);
+        this.btnLeft = this.makeControl('◀', GAME.colors[0], () => (this.leftHeld = true), () => (this.leftHeld = false));
+        this.btnRight = this.makeControl('▶', GAME.colors[0], () => (this.rightHeld = true), () => (this.rightHeld = false));
+        this.btnJump = this.makeControl('JUMP', GAME.colors[1], () => this.bufferJump(), () => {});
+        this.btnLeftLabel = this.btnLeft.getData('label') as Phaser.GameObjects.Text;
+        this.btnRightLabel = this.btnRight.getData('label') as Phaser.GameObjects.Text;
+        this.btnJumpLabel = this.btnJump.getData('label') as Phaser.GameObjects.Text;
 
         this.cursors = this.input.keyboard!.createCursorKeys();
         this.keyA = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A);
@@ -178,10 +185,6 @@ export class Game extends Phaser.Scene {
         this.input.keyboard!.on('keydown-UP', () => this.bufferJump());
         this.input.keyboard!.on('keydown-W', () => this.bufferJump());
 
-        this.input.on('pointerdown', this.onPointerDown, this);
-        this.input.on('pointermove', this.onPointerMove, this);
-        this.input.on('pointerup', this.onPointerUp, this);
-
         this.scale.on('resize', this.handleResize, this);
         this.events.once('shutdown', () => this.scale.off('resize', this.handleResize, this));
 
@@ -189,15 +192,41 @@ export class Game extends Phaser.Scene {
         this.resetWorld();
     }
 
+    private makeControl(
+        label: string,
+        color: number,
+        onDown: () => void,
+        onUp: () => void
+    ): Phaser.GameObjects.Rectangle {
+        const rect = this.add.rectangle(0, 0, 72, 72, color, 0.16).setStrokeStyle(3, color, 0.6).setDepth(9);
+        rect.setInteractive({ useHandCursor: true });
+        const text = this.add
+            .text(0, 0, label, {
+                fontFamily: 'Arial Black, Arial, sans-serif',
+                fontSize: label.length > 1 ? '18px' : '26px',
+                color: '#ffffff'
+            })
+            .setOrigin(0.5)
+            .setDepth(10);
+        rect.setData('label', text);
+        rect.on('pointerdown', () => {
+            sfx.resume();
+            onDown();
+        });
+        rect.on('pointerup', onUp);
+        rect.on('pointerout', onUp);
+        rect.on('pointerupoutside', onUp);
+        return rect;
+    }
+
     //  World / generation ---------------------------------------------------
 
     private resetWorld(): void {
         this.platforms.clear(true, true);
-        this.walls.clear(true, true);
         this.movers.clear(true, true);
 
-        const startX = this.width / 2;
-        this.spawnPlatform(startX, 40, Math.min(220, this.width * 0.5), 'normal');
+        const startX = (this.towerLeft + this.towerRight) / 2;
+        this.spawnPlatform(startX, 40, Math.min(200, this.towerWidth * 0.6), 'normal');
         this.player.setPosition(startX, 40 - PLAYER_H / 2 - 10);
         this.body.setVelocity(0, 0);
 
@@ -226,30 +255,21 @@ export class Game extends Phaser.Scene {
         body.setAllowGravity(false);
         body.setImmovable(true);
         body.setVelocityX(Phaser.Math.RND.pick([-1, 1]) * GAME.moverSpeed);
-        rect.setData('minX', w / 2 + 8);
-        rect.setData('maxX', this.width - w / 2 - 8);
-    }
-
-    private spawnWall(x: number, y: number): void {
-        const rect = this.add
-            .rectangle(x, y, GAME.wallWidth, GAME.wallHeight, GAME.colors[3])
-            .setStrokeStyle(2, 0xffffff, 0.35)
-            .setDepth(3);
-        this.walls.add(rect);
+        rect.setData('minX', this.towerLeft + w / 2 + 8);
+        rect.setData('maxX', this.towerRight - w / 2 - 8);
     }
 
     private spawnRow(y: number): void {
-        const count = Math.random() < 0.55 ? 1 : 2;
+        const count = Math.random() < 0.5 ? 1 : 2;
+        const lo = this.towerLeft + GAME.platformWidthMax / 2 + 8;
+        const hi = this.towerRight - GAME.platformWidthMax / 2 - 8;
         const used: number[] = [];
+
         for (let i = 0; i < count; i++) {
             const w = Phaser.Math.Between(GAME.platformWidthMin, GAME.platformWidthMax);
-            let x = Phaser.Math.Between(Math.round(w / 2), Math.round(this.width - w / 2));
+            let x = Phaser.Math.Between(Math.round(lo), Math.round(hi));
             if (used.length > 0 && Math.abs(x - used[0]) < GAME.platformMinGap) {
-                x = Phaser.Math.Clamp(
-                    used[0] + (x > used[0] ? 1 : -1) * (w / 2 + GAME.platformMinGap + 10),
-                    w / 2,
-                    this.width - w / 2
-                );
+                x = Phaser.Math.Clamp(used[0] + (x > used[0] ? 1 : -1) * (w / 2 + GAME.platformMinGap + 8), lo, hi);
             }
             used.push(x);
 
@@ -258,11 +278,8 @@ export class Game extends Phaser.Scene {
             this.spawnPlatform(x, y, w, kind);
         }
 
-        if (Math.random() < 0.1) {
-            this.spawnWall(Phaser.Math.Between(40, this.width - 40), y - GAME.rowStep / 2);
-        }
         if (Math.random() < 0.12) {
-            this.spawnMover(Phaser.Math.Between(90, this.width - 90), y - GAME.rowStep / 2, GAME.moverWidth);
+            this.spawnMover(Phaser.Math.Between(Math.round(lo), Math.round(hi)), y - GAME.rowStep / 2, GAME.moverWidth);
         }
     }
 
@@ -276,7 +293,6 @@ export class Game extends Phaser.Scene {
             }
         };
         cull(this.platforms);
-        cull(this.walls);
         cull(this.movers);
     }
 
@@ -286,31 +302,6 @@ export class Game extends Phaser.Scene {
             this.spawnRow(this.spawnY);
             this.spawnY -= GAME.rowStep;
         }
-    }
-
-    //  Input ----------------------------------------------------------------
-
-    private onPointerDown(pointer: Phaser.Input.Pointer): void {
-        if (this.isInJumpZone(pointer)) {
-            this.bufferJump();
-            return;
-        }
-        this.pointerTargetX = pointer.x;
-    }
-
-    private onPointerMove(pointer: Phaser.Input.Pointer): void {
-        if (!pointer.isDown || this.isInJumpZone(pointer)) {
-            return;
-        }
-        this.pointerTargetX = pointer.x;
-    }
-
-    private onPointerUp(): void {
-        this.pointerTargetX = null;
-    }
-
-    private isInJumpZone(pointer: Phaser.Input.Pointer): boolean {
-        return pointer.x > this.width * 0.6 && pointer.y > this.height - 150;
     }
 
     private bufferJump(): void {
@@ -337,8 +328,9 @@ export class Game extends Phaser.Scene {
 
         this.highestY = Math.min(this.highestY, this.player.y);
         this.updateMovers();
-        this.updateMovement();
+        this.updateMovement(dt);
         this.updateJump();
+        this.updateWallSlide();
         this.updateCarry();
         this.updateDanger(dt);
         this.ensureGenerated();
@@ -362,19 +354,19 @@ export class Game extends Phaser.Scene {
         }
     }
 
-    private updateMovement(): void {
-        let dir = 0;
-        if (this.cursors.left?.isDown || this.keyA.isDown) {
-            dir = -1;
-        } else if (this.cursors.right?.isDown || this.keyD.isDown) {
-            dir = 1;
-        } else if (this.pointerTargetX !== null) {
-            const delta = this.pointerTargetX - this.player.x;
-            if (Math.abs(delta) > 10) {
-                dir = delta < 0 ? -1 : 1;
-            }
-        }
-        this.body.setVelocityX(dir * GAME.moveSpeed);
+    private inputDir(): number {
+        const left = this.leftHeld || !!this.cursors.left?.isDown || this.keyA.isDown;
+        const right = this.rightHeld || !!this.cursors.right?.isDown || this.keyD.isDown;
+        return (right ? 1 : 0) - (left ? 1 : 0);
+    }
+
+    private updateMovement(dt: number): void {
+        const dir = this.inputDir();
+        const target = dir * GAME.maxSpeed;
+        const rate = dir !== 0 ? GAME.accel : GAME.decel;
+        const step = rate * dt;
+        const diff = target - this.body.velocity.x;
+        this.body.velocity.x += Phaser.Math.Clamp(diff, -step, step);
         if (dir !== 0) {
             this.facing = dir;
         }
@@ -395,7 +387,10 @@ export class Game extends Phaser.Scene {
         const onWall = this.body.blocked.left || this.body.blocked.right;
 
         if (canGroundJump && wantsJump) {
-            this.body.setVelocityY(-GAME.jumpVel);
+            // Momentum jump: the faster you run, the higher you go.
+            const speedFrac = Math.min(1, Math.abs(this.body.velocity.x) / GAME.maxSpeed);
+            const jumpVel = GAME.jumpBase + speedFrac * GAME.jumpSpeedBonus;
+            this.body.setVelocityY(-jumpVel);
             this.jumpBufferedAt = -9999;
             this.lastGroundedAt = -9999;
             this.puff(this.player.x, this.player.y + PLAYER_H / 2, GAME.colors[0]);
@@ -409,6 +404,17 @@ export class Game extends Phaser.Scene {
             this.jumpBufferedAt = -9999;
             this.puff(this.player.x, this.player.y, GAME.platformEdge);
             sfx.bubble();
+        }
+    }
+
+    private updateWallSlide(): void {
+        if (this.body.blocked.down) {
+            return;
+        }
+        const pushingLeft = this.body.blocked.left && this.inputDir() < 0;
+        const pushingRight = this.body.blocked.right && this.inputDir() > 0;
+        if ((pushingLeft || pushingRight) && this.body.velocity.y > GAME.wallSlideSpeed) {
+            this.body.setVelocityY(GAME.wallSlideSpeed);
         }
     }
 
@@ -532,25 +538,37 @@ export class Game extends Phaser.Scene {
         const scrollY = this.cameras.main.scrollY;
 
         this.bg.clear();
-        this.bg.fillStyle(GAME.background, 1);
+        this.bg.fillStyle(GAME.outside, 1);
         this.bg.fillRect(0, 0, this.width, this.height);
+        this.bg.fillStyle(GAME.background, 1);
+        this.bg.fillRect(this.towerLeft, 0, this.towerWidth, this.height);
+
         this.bg.lineStyle(1, GAME.colors[0], 0.12);
         const start = Math.floor(scrollY / 80) * 80;
         for (let i = -1; i < this.height / 80 + 2; i++) {
             const y = start + i * 80 - scrollY;
-            this.bg.lineBetween(0, y, this.width, y);
+            this.bg.lineBetween(this.towerLeft, y, this.towerRight, y);
         }
 
+        // Side walls (the tower boundary).
+        this.bg.fillStyle(GAME.wall, 1);
+        this.bg.fillRect(this.towerLeft - GAME.wallThickness, 0, GAME.wallThickness, this.height);
+        this.bg.fillRect(this.towerRight, 0, GAME.wallThickness, this.height);
+        this.bg.fillStyle(GAME.colors[0], 0.7);
+        this.bg.fillRect(this.towerLeft - 3, 0, 3, this.height);
+        this.bg.fillRect(this.towerRight, 0, 3, this.height);
+
+        // Plasma inside the tower.
         const dangerScreenY = this.dangerY - scrollY;
         this.dangerGfx.clear();
         const bands = 10;
         const bandH = Math.max(6, (this.height - dangerScreenY) / bands);
         for (let i = 0; i < bands; i++) {
             this.dangerGfx.fillStyle(GAME.danger, Math.max(0.12, 0.9 - i * 0.07));
-            this.dangerGfx.fillRect(0, dangerScreenY + i * bandH, this.width, bandH + 1);
+            this.dangerGfx.fillRect(this.towerLeft, dangerScreenY + i * bandH, this.towerWidth, bandH + 1);
         }
         this.dangerGfx.fillStyle(0xffffff, 0.85);
-        this.dangerGfx.fillRect(0, dangerScreenY - 2, this.width, 3);
+        this.dangerGfx.fillRect(this.towerLeft, dangerScreenY - 2, this.towerWidth, 3);
 
         this.visor.setPosition(this.player.x + this.facing * 4, this.player.y - 6);
     }
@@ -567,15 +585,27 @@ export class Game extends Phaser.Scene {
         this.width = this.scale.width;
         this.height = this.scale.height;
 
+        this.towerWidth = Math.min(this.width, GAME.towerMaxWidth);
+        this.towerLeft = (this.width - this.towerWidth) / 2;
+        this.towerRight = this.towerLeft + this.towerWidth;
+
+        this.physics.world.setBounds(this.towerLeft, -100000, this.towerWidth, 200000);
+        this.physics.world.setBoundsCollision(true, true, false, false);
+
         this.heightText.setPosition(20, 16);
         this.bestText.setPosition(this.width - 20, 20);
         this.comboText.setPosition(this.width / 2, 16);
 
-        this.jumpPad.setPosition(this.width - 82, this.height - 82);
-        this.jumpLabel.setPosition(this.width - 82, this.height - 82);
+        const by = this.height - 78;
+        this.btnLeft.setPosition(58, by);
+        this.btnLeftLabel.setPosition(58, by);
+        this.btnRight.setPosition(146, by);
+        this.btnRightLabel.setPosition(146, by);
+        this.btnJump.setPosition(this.width - 68, by);
+        this.btnJumpLabel.setPosition(this.width - 68, by);
 
         if (this.player) {
-            this.player.x = Phaser.Math.Clamp(this.player.x, 0, this.width);
+            this.player.x = Phaser.Math.Clamp(this.player.x, this.towerLeft + PLAYER_W / 2, this.towerRight - PLAYER_W / 2);
         }
     }
 

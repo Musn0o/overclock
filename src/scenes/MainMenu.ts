@@ -91,7 +91,7 @@ export class MainMenu extends Phaser.Scene {
         });
 
         this.hint = this.add
-            .text(0, 0, 'Move left / right · jump · chain platforms for combo', {
+            .text(0, 0, 'Run to build speed · faster run = higher jump · wall-jump', {
                 fontFamily: 'Arial, sans-serif',
                 fontSize: '16px',
                 color: '#59618f'

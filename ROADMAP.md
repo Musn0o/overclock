@@ -41,10 +41,16 @@ Implemented and runnable:
 - [ ] Lucky wheel every 5 minutes.
 - [ ] Coins/XP balance + level-up feedback.
 
-### Milestone 3 — Controls & accessibility
-- [ ] Touch: on-screen left/right + jump (currently hold-toward-pointer + jump
-      pad); support both.
-- [ ] Keyboard parity; Esc closes modals; responsive across aspect ratios.
+### Milestone 3 — Controls & accessibility (mostly done in the feel pass)
+- [x] Touch: explicit on-screen **left / right / jump** buttons (multi-touch).
+- [x] Keyboard parity (arrows / A-D / Space).
+- [ ] Esc closes modals; final responsive polish across aspect ratios.
+
+### Feel pass (addresses early feedback)
+- [x] **Momentum movement** (accelerate/decelerate) instead of instant velocity.
+- [x] **Speed-based jump height** (run faster → jump higher), Icy-Tower style.
+- [x] **Narrow tower with solid side walls** so platforms are always reachable.
+- [x] **Wall-slide + wall-jump** off the side walls to climb.
 
 ### Milestone 4 — Polish & platform compliance
 - [ ] HUD readability pass; pause overlay.
