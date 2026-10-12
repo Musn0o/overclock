@@ -29,6 +29,12 @@ export class Game extends Phaser.Scene {
     private towerLeft = 0;
     private towerRight = 0;
     private towerWidth = 0;
+    private innerLeft = 0;
+    private innerRight = 0;
+
+    private canWallJump = true;
+    private prevWallLeft = false;
+    private prevWallRight = false;
 
     private bg!: Phaser.GameObjects.Graphics;
     private dangerGfx!: Phaser.GameObjects.Graphics;
@@ -69,7 +75,6 @@ export class Game extends Phaser.Scene {
     private lastLandingY: number | null = null;
     private wasGrounded = false;
     private lastGroundedAt = -9999;
-    private lastWallJumpAt = -9999;
     private jumpBufferedAt = -9999;
 
     private spawnY = 0;
@@ -95,6 +100,9 @@ export class Game extends Phaser.Scene {
         this.rightHeld = false;
         this.wasGrounded = false;
         this.lastLandingY = null;
+        this.canWallJump = true;
+        this.prevWallLeft = false;
+        this.prevWallRight = false;
         this.roundActive = true;
     }
 
@@ -105,7 +113,6 @@ export class Game extends Phaser.Scene {
         this.slowmo = 0;
         this.closeCallArmed = false;
         this.lastGroundedAt = -9999;
-        this.lastWallJumpAt = -9999;
         this.jumpBufferedAt = -9999;
         this.groundPlatform = null;
 
@@ -225,7 +232,7 @@ export class Game extends Phaser.Scene {
         this.platforms.clear(true, true);
         this.movers.clear(true, true);
 
-        const startX = (this.towerLeft + this.towerRight) / 2;
+        const startX = (this.innerLeft + this.innerRight) / 2;
         this.spawnPlatform(startX, 40, Math.min(200, this.towerWidth * 0.6), 'normal');
         this.player.setPosition(startX, 40 - PLAYER_H / 2 - 10);
         this.body.setVelocity(0, 0);
@@ -236,8 +243,9 @@ export class Game extends Phaser.Scene {
             this.spawnY -= GAME.rowStep;
         }
 
-        this.dangerY = 40 + GAME.dangerStartOffset;
         this.cameras.main.scrollY = this.player.y - this.height * 0.62;
+        // The plasma is the rising floor: visible just under the start view.
+        this.dangerY = this.cameras.main.scrollY + this.height - 96;
     }
 
     private spawnPlatform(x: number, y: number, w: number, kind: PlatformKind): void {
@@ -255,14 +263,14 @@ export class Game extends Phaser.Scene {
         body.setAllowGravity(false);
         body.setImmovable(true);
         body.setVelocityX(Phaser.Math.RND.pick([-1, 1]) * GAME.moverSpeed);
-        rect.setData('minX', this.towerLeft + w / 2 + 8);
-        rect.setData('maxX', this.towerRight - w / 2 - 8);
+        rect.setData('minX', this.innerLeft + w / 2 + 8);
+        rect.setData('maxX', this.innerRight - w / 2 - 8);
     }
 
     private spawnRow(y: number): void {
         const count = Math.random() < 0.5 ? 1 : 2;
-        const lo = this.towerLeft + GAME.platformWidthMax / 2 + 8;
-        const hi = this.towerRight - GAME.platformWidthMax / 2 - 8;
+        const lo = this.innerLeft + GAME.platformWidthMax / 2 + 6;
+        const hi = this.innerRight - GAME.platformWidthMax / 2 - 6;
         const used: number[] = [];
 
         for (let i = 0; i < count; i++) {
@@ -382,9 +390,29 @@ export class Game extends Phaser.Scene {
         }
         this.wasGrounded = grounded;
 
+        const wallLeft = this.body.blocked.left;
+        const wallRight = this.body.blocked.right;
+        const onWall = wallLeft || wallRight;
+
+        // One wall-jump per wall contact: locked until you leave the wall.
+        if (grounded || !onWall) {
+            this.canWallJump = true;
+        }
+
+        // Bounce off a wall you ran/flew into (but not if you're clinging to it).
+        if (!grounded && ((wallLeft && !this.prevWallLeft) || (wallRight && !this.prevWallRight))) {
+            const dir = this.inputDir();
+            if (wallLeft && dir >= 0 && this.body.velocity.x < -160) {
+                this.body.velocity.x = -this.body.velocity.x * 0.55;
+            } else if (wallRight && dir <= 0 && this.body.velocity.x > 160) {
+                this.body.velocity.x = -this.body.velocity.x * 0.55;
+            }
+        }
+        this.prevWallLeft = wallLeft;
+        this.prevWallRight = wallRight;
+
         const wantsJump = this.time.now - this.jumpBufferedAt <= GAME.jumpBufferMs;
         const canGroundJump = this.time.now - this.lastGroundedAt <= GAME.coyoteMs;
-        const onWall = this.body.blocked.left || this.body.blocked.right;
 
         if (canGroundJump && wantsJump) {
             // Momentum jump: the faster you run, the higher you go.
@@ -395,12 +423,12 @@ export class Game extends Phaser.Scene {
             this.lastGroundedAt = -9999;
             this.puff(this.player.x, this.player.y + PLAYER_H / 2, GAME.colors[0]);
             sfx.click();
-        } else if (onWall && !grounded && wantsJump && this.time.now - this.lastWallJumpAt > GAME.wallJumpCooldownMs) {
-            const away = this.body.blocked.left ? 1 : -1;
+        } else if (onWall && !grounded && wantsJump && this.canWallJump) {
+            const away = wallLeft ? 1 : -1;
             this.body.setVelocityY(-GAME.wallJumpVel);
             this.body.setVelocityX(away * GAME.wallJumpPush);
             this.facing = away;
-            this.lastWallJumpAt = this.time.now;
+            this.canWallJump = false;
             this.jumpBufferedAt = -9999;
             this.puff(this.player.x, this.player.y, GAME.platformEdge);
             sfx.bubble();
@@ -491,6 +519,13 @@ export class Game extends Phaser.Scene {
             sfx.whoosh();
         }
 
+        // Falling out of the bottom of the tower is death, immediately.
+        const viewBottom = this.cameras.main.scrollY + this.height;
+        if (this.player.y - PLAYER_H / 2 > viewBottom + 40) {
+            this.die();
+            return;
+        }
+
         if (this.player.y + PLAYER_H / 2 >= this.dangerY) {
             this.die();
         }
@@ -543,20 +578,22 @@ export class Game extends Phaser.Scene {
         this.bg.fillStyle(GAME.background, 1);
         this.bg.fillRect(this.towerLeft, 0, this.towerWidth, this.height);
 
-        this.bg.lineStyle(1, GAME.colors[0], 0.12);
-        const start = Math.floor(scrollY / 80) * 80;
-        for (let i = -1; i < this.height / 80 + 2; i++) {
-            const y = start + i * 80 - scrollY;
-            this.bg.lineBetween(this.towerLeft, y, this.towerRight, y);
+        // World-anchored horizontal grid lines (these scroll with the tower).
+        this.bg.lineStyle(1, GAME.colors[0], 0.16);
+        const first = Math.floor(scrollY / 80) - 1;
+        const last = Math.ceil((scrollY + this.height) / 80) + 1;
+        for (let k = first; k <= last; k++) {
+            const y = k * 80 - scrollY;
+            this.bg.lineBetween(this.innerLeft, y, this.innerRight, y);
         }
 
-        // Side walls (the tower boundary).
+        // Side walls drawn INSIDE the tower edges so they are always visible.
         this.bg.fillStyle(GAME.wall, 1);
-        this.bg.fillRect(this.towerLeft - GAME.wallThickness, 0, GAME.wallThickness, this.height);
-        this.bg.fillRect(this.towerRight, 0, GAME.wallThickness, this.height);
-        this.bg.fillStyle(GAME.colors[0], 0.7);
-        this.bg.fillRect(this.towerLeft - 3, 0, 3, this.height);
-        this.bg.fillRect(this.towerRight, 0, 3, this.height);
+        this.bg.fillRect(this.towerLeft, 0, GAME.wallThickness, this.height);
+        this.bg.fillRect(this.towerRight - GAME.wallThickness, 0, GAME.wallThickness, this.height);
+        this.bg.fillStyle(GAME.colors[0], 0.85);
+        this.bg.fillRect(this.innerLeft - 3, 0, 3, this.height);
+        this.bg.fillRect(this.innerRight, 0, 3, this.height);
 
         // Plasma inside the tower.
         const dangerScreenY = this.dangerY - scrollY;
@@ -588,8 +625,11 @@ export class Game extends Phaser.Scene {
         this.towerWidth = Math.min(this.width, GAME.towerMaxWidth);
         this.towerLeft = (this.width - this.towerWidth) / 2;
         this.towerRight = this.towerLeft + this.towerWidth;
+        this.innerLeft = this.towerLeft + GAME.wallThickness;
+        this.innerRight = this.towerRight - GAME.wallThickness;
 
-        this.physics.world.setBounds(this.towerLeft, -100000, this.towerWidth, 200000);
+        // Invisible world bounds = the inner faces of the side walls.
+        this.physics.world.setBounds(this.innerLeft, -100000, this.innerRight - this.innerLeft, 200000);
         this.physics.world.setBoundsCollision(true, true, false, false);
 
         this.heightText.setPosition(20, 16);
