@@ -1,0 +1,19 @@
+{
+    "name": "overclock",
+    "description": "A neon tower-climbing arcade game built for YouTube Playables.",
+    "version": "0.1.0",
+    "type": "module",
+    "private": true,
+    "scripts": {
+        "dev": "vite --config vite/config.dev.mjs",
+        "typecheck": "tsc --noEmit",
+        "build": "tsc --noEmit && vite build --config vite/config.prod.mjs",
+        "preview": "vite preview --config vite/config.prod.mjs --port 8080"
+    },
+    "devDependencies": {
+        "phaser": "^3.90.0",
+        "terser": "^5.34.1",
+        "typescript": "^5.6.3",
+        "vite": "^5.4.8"
+    }
+}
